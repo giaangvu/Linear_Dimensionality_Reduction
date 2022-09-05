@@ -1,0 +1,259 @@
+---
+title: "STAT2221 - Final Project Code"
+author: "Giang Vu"
+date: "11/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE, out.width="60%"}
+knitr::opts_chunk$set(echo = TRUE, warning = F)
+#please change to your directory if you wish to run the code
+setwd("/Users/giangvu/Desktop/STAT 2221 - Advanced Applied Multivariate Analysis/Final Project") 
+source("functions.R")
+```
+
+Please refer to *functions.R* for more details about packages and user-defined functions.
+
+## **Simulated Data**
+
+### **Continuous Response**
+
+```{r}
+mu <- rep(0, 100)
+sigma <- diag(x=1, nrow = 100, ncol = 100) 
+for (i in 1:length(sigma)) {
+  sigma[i] <- ifelse(sigma[i]==0,0.5,1)
+}
+#generate X
+set.seed(100)
+X.sim <- mvrnorm(n=500, mu=mu, Sigma = sigma) # a 500 x 100 matrix, 500 samples with 100 predictors from multivariate Gaussian N(0,1*Identity), correlation between any of two X's are 0.5
+#plot eigenvals of X
+plot(eigen(t(X.sim) %*% X.sim)$values, type = "l", ylab = "Eigenvalues",
+     main = "Eigenvalue plot of Covariance Matrix") 
+
+#generate noise
+set.seed(1000)
+epsilon <- rnorm(n=500,mean=0, sd = 0.5) #for fast decaying, a 500 x 1 matrix
+
+#generate the coefficent beta = theta * alpha
+alpha <- rep(1,10) #a vector of 1's in R^10 (10 x 1)
+theta <- eigen(t(X.sim) %*% X.sim)$vectors[,1:10] #a 100 x 10 matrix
+#the 10 eigenvectors corresponding to 10 largest eigenvals of XtX, so that our coefficient is in a subspace that is well aligned with the subspace containing maximal data variation of X. limitations compared to original paper: i didnt look at other type of alignments
+
+#generate response
+Y.sim <- X.sim %*% theta %*% matrix(alpha, nrow = 10, ncol=1) + matrix(epsilon, nrow = 500, ncol=1)
+colnames(Y.sim) <- "Y" 
+
+#merge together to form train and test set
+data.sim <- cbind(X.sim, Y.sim)
+set.seed(123)
+# Selecting 75% of data training set, the rest is test set  
+sample.sim <- sample.int(n = nrow(data.sim), size = floor(.75*nrow(data.sim)), replace = F)
+train.sim <- data.sim[sample.sim, ] #training data of 375 rows
+test.sim  <- data.sim[-sample.sim, ] #test data of 125 rows
+
+#get X train and Y train for the functions
+Y.sim.train <- train.sim[,ncol(train.sim)]
+X.sim.train <- train.sim[,-ncol(train.sim)]
+
+
+#PCR (Classical PCA and then regression)
+sim.pcr <- my.pcr(X.sim.train, train.sim, test.sim)  
+head(sim.pcr) #MSE for training and test, at different value of k
+
+#PLS (Partial Least Squares)
+sim.pls <- my.pls(X.sim.train, train.sim, test.sim)
+head(sim.pls) #MSE for training and test, at different value of k
+
+#Barshan
+sim.Barshan <- my.Barshan(X.sim.train, Y.sim.train, train.sim, test.sim)
+head(sim.Barshan)
+
+#plot the training MSE of the methods together to compare
+plot(sim.pcr$mse_train, type = "l", col = "red",
+     main = "Training MSE", ylab = "MSE", xlab = "No. of kept components")
+lines(sim.pls$mse_train, col="green")
+lines(sim.Barshan$mse_train, col="blue")
+legend(67, 8.5, legend = c("PCR", "PLS", "Barshan"), 
+       col = c("red", "green","blue"), lty = 1, title = "Methods")
+
+
+#plot the test MSE of the methods together to compare
+plot(sim.pcr$mse_test, type = "l", col = "red",
+     main = "Test MSE", ylab = "MSE", xlab = "No. of kept components")
+lines(sim.pls$mse_test, col="green")
+lines(sim.Barshan$mse_test, col="blue")
+legend(67, 8, legend = c("PCR", "PLS", "Barshan"), 
+       col = c("red", "green","blue"), lty = 1, title = "Methods")
+#PCA and Barshan overlap, could explore this more, PLS did the best
+
+```
+
+### **Binary Response**
+
+```{r}
+#same process to generate X
+mu <- rep(0, 50)
+sigma <- diag(x=1, nrow = 50, ncol = 50) 
+for (i in 1:length(sigma)) {
+  sigma[i] <- ifelse(sigma[i]==0,0.5,1)
+}
+#generate X
+set.seed(200)
+bin.X.sim <- mvrnorm(n=500, mu=mu, Sigma = sigma) # a 500 x 50 matrix, 500 samples with 50 predictors from multivariate Gaussian N(0,1*Identity), correlation between any of two X's are 0.5
+
+#generate a linear combination of all the X's
+e <- matrix(rep(1,500), nrow = 500)
+c <- matrix(2:51, nrow = 1)
+Z <- e + t(c %*% t(bin.X.sim)) #Z is a 500x1 matrix
+
+#put Z in expit function to get probability
+pr <- 1/(1+exp(-Z))
+
+#generate Y as bernoulli
+bin.Y.sim <- pr > 0.5
+
+#combine X and Y for data set
+bin.data.sim <- data.frame(cbind(bin.X.sim, bin.Y.sim))
+bin.data.sim <- bin.data.sim %>% rename(Y = X51)
+
+bin.data.sim <- data.frame(bin.data.sim %>% sapply(as.numeric))
+set.seed(286)
+# Selecting 75% of data training set, the rest is test set  
+bin.sample.sim <- sample.int(n = nrow(bin.data.sim), size = floor(.75*nrow(bin.data.sim)), replace = F)
+bin.train.sim <- bin.data.sim[bin.sample.sim, ]
+bin.test.sim  <- bin.data.sim[-bin.sample.sim, ]
+
+#LDA
+bin.sim.lda <- my.lda(train=bin.train.sim, test=bin.test.sim)
+
+#PLS (Partial Least Squares)
+#scree plot
+
+bin.m.sim <- plsr(Y ~., data=bin.train.sim, ncomp=ncol(bin.train.sim[,-ncol(bin.train.sim)]), validation = "CV")
+summary(bin.m.sim)
+validationplot(bin.m.sim)
+validationplot(bin.m.sim, val.type="MSEP")
+validationplot(bin.m.sim, val.type="R2") 
+#we can see from the 3 plots that it's good to retain 1 component (elbow)
+ncomp <- 1
+bin.sim.pls <- bin.pls(m=bin.m.sim,ncomp,train = bin.train.sim,test = bin.test.sim)
+
+#Barshan to get matrix Q and then apply logistic regression, choose to retain 1 as well
+bin.sim.Barshan <- bin.Barshan(ncomp, train=bin.train.sim, test=bin.test.sim)
+
+#compile all methods to compare
+bin.sim.fin <- left_join(bin.sim.lda, bin.sim.pls, by = c("Data Set", "n", "r", "K"))  %>%
+                left_join(., bin.sim.Barshan, by=c("Data Set", "n", "r", "K")) 
+bin.sim.fin
+
+#PLS and Barshan have better performance (lower misclassification error) than LDA for simulation data
+```
+
+## **Real Data**
+
+### **Continuous Response**
+
+#### **Boston Housing**
+
+```{r}
+Boston <- scale(Boston, center = T, scale = T)
+set.seed(101)
+# Selecting 75% of data training set, the rest is test set  
+sample <- sample.int(n = nrow(Boston), size = floor(.75*nrow(Boston)), replace = F)
+train <- Boston[sample, ]
+test  <- Boston[-sample, ]
+
+#plot eigenvalues of XtX
+Y <- train[,14]
+X <- train[,-14]
+C <- t(X) %*% X
+C.eig <- eigen(C)
+plot(C.eig$values, type = "l", ylab = "Eigenvalues",
+     main = "Eigenvalue plot of Covariance Matrix") 
+
+#PCR (Classical PCA and then regression)
+Boston.pcr <- my.pcr(X, train, test)  
+head(Boston.pcr) #MSE for training and test, at different value of k
+
+#PLS (Partial Least Squares)
+Boston.pls <- my.pls(X, train, test)
+head(Boston.pls) #MSE for training and test, at different value of k
+
+#Barshan
+Boston.Barshan <- my.Barshan(X, Y, train, test)
+head(Boston.Barshan)
+
+#plot the training MSE of the methods together to compare
+plot(Boston.pcr$mse_train, type = "l", col = "red",
+     main = "Training MSE", ylab = "MSE", xlab = "No. of kept components")
+lines(Boston.pls$mse_train, col="green")
+lines(Boston.Barshan$mse_train, col="blue")
+legend(9, 0.63, legend = c("PCR", "PLS", "Barshan"), 
+       col = c("red", "green","blue"), lty = 1, title = "Methods")
+
+#plot the test MSE of the methods together to compare
+plot(Boston.pcr$mse_test, type = "l", col = "red",
+     main = "Test MSE", ylab = "MSE", xlab = "No. of kept components")
+lines(Boston.pls$mse_test, col="green")
+lines(Boston.Barshan$mse_test, col="blue")
+legend(9, 0.61, legend = c("PCR", "PLS", "Barshan"), 
+       col = c("red", "green","blue"), lty = 1, title = "Methods")
+
+```
+
+### **Binary Response**
+
+#### **Ionosphere**
+
+```{r}
+Ionos <- Ionos[,-2] #remove a predictor bc it's 0 for all observations
+Ionos$V35 <- ifelse(Ionos$V35 == "g", 1, 0) #column 35 contains Y, 2 outcomes, 1 for good, 0 for bad
+Ionos <- Ionos %>% rename(Y = V35)
+Ionos <- data.frame(Ionos %>% sapply(as.numeric))
+set.seed(101)
+# Selecting 75% of data training set, the rest is test set  
+sample <- sample.int(n = nrow(Ionos), size = floor(.75*nrow(Ionos)), replace = F)
+train <- Ionos[sample, ]
+test  <- Ionos[-sample, ]
+
+#LDA is already a dimensionality reduction method itself (transform X into scaling - linear discriminants)
+#LDA
+Ionos.lda <- my.lda(train, test)
+
+#Apply these following methods to the same data, and obtain misclassification rate in order to compare them together (Izenman Table 8.7 p.260 for reference)
+#Apply each method on the data to reduce dim, and then get predicted classification (use simple threshold of Y^ > 0.5 -> class 1), choose ncomp by screeplot?
+
+#PLS (Partial Least Squares)
+#scree plot
+
+m <- plsr(Y ~., data=train, ncomp=ncol(train[,-ncol(train)]), validation = "CV")
+summary(m)
+validationplot(m)
+validationplot(m, val.type="MSEP")
+validationplot(m, val.type="R2") 
+#we can see from the 3 plots that it's good to retain 4 components (second elbow)
+ncomp <- 4
+Ionos.pls <- bin.pls(m,ncomp,train,test)
+
+#Barshan to get matrix Q and then apply logistic regression, choose to retain 4 as well
+Ionos.Barshan <- bin.Barshan(ncomp, train, test)
+
+#compile all methods to compare
+Ionos.fin <- left_join(Ionos.lda, Ionos.pls, by = c("Data Set", "n", "r", "K"))  %>%
+                left_join(., Ionos.Barshan, by=c("Data Set", "n", "r", "K")) 
+Ionos.fin
+#LDA is actually the best performing method here for binary response
+```
+
+### References
+
+Dua, D.\ \& Graff, C.\ (2019). Johns Hopkins University Ionosphere database. UCI Machine Learning Repository [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California, School of Information and Computer Science.
+
+```{r}
+citation("MASS")
+citation("stats")
+citation("dplyr")
+citation("pls")
+citation("tsiMisc")
+```
